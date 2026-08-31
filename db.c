@@ -19,9 +19,10 @@ typedef struct {
 } Table;
 
 Table **tables = NULL;
-size_t tables_count;
+size_t tables_count = 0;
 
-char *tableNew(Table *table, char *name, char *text[], int cols) {
+char *
+tableNew(Table *table, char *name, char *text[], int cols) {
   if (cols % 2 != 0)
     return "Invalid Schema";
 
@@ -33,9 +34,7 @@ char *tableNew(Table *table, char *name, char *text[], int cols) {
   };
 
   for (int i = 0; i < cols; i += 2) {
-    table->schema[i / 2] = (Col) {
-      .name = strdup(text[i])
-    };
+    table->schema[i / 2].name = strdup(text[i]);
 
     switch (text[i / 2 + 1][0]) {
     case 'n':
@@ -65,14 +64,12 @@ commandNew(char *text)
   for (i = 0, token = strtok_r(text, " ", &ctx);
        token;
        i++, token = strtok_r(NULL, " ", &ctx)) {
-
     tokens = realloc(tokens, sizeof *tokens * (i + 1));
     tokens[i] = strdup(token);
-    i++;
   }
 
   Table *t = malloc(sizeof *t);
-
+  
   if ((err = tableNew(t, tokens[0], &tokens[1], i - 1)) != NULL)
     return err;
 
