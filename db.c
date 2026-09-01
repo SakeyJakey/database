@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 typedef enum { TYPE_NUM, TYPE_STR, TYPE_BOOL, TYPE_BYTES } Type;
 
@@ -134,42 +135,52 @@ commandNew(char *text)
 	char **tokens = NULL, *err;
 	int i;
 
-	if (!(err = tokenise(text, &tokens, &i)))
+	if ((err = tokenise(text, &tokens, &i)))
 		return err;
 
 	Table *t = malloc(sizeof *t);
 	
-	if (!(err = tableNew(t, tokens[0], &tokens[1], i - 1)))
+	if ((err = tableNew(t, tokens[0], &tokens[1], i - 1)))
 		return err;
 
 	tables = realloc(tables, sizeof *tables * (tables_count + 1));
 	tables[tables_count] = t;
 	tables_count++;
 
-	return NULL;
+	return "new: Success\n";
+}
+
+size_t
+typeSize(Type t) {
+	switch (t) {
+	case TYPE_BOOL:
+		return sizeof(int);
+	case TYPE_BYTES:
+	case TYPE_STR:
+		return sizeof(char *);
+	case TYPE_NUM:
+		return sizeof(double);
+	}
+}
+
+size_t
+tableRowSize(Table *t)
+{
+	size_t row_size = 0;
+	for (uint32_t i = 0; i < t->cols; i++) {
+		row_size += typeSize(t->schema[i].type);
+	}
+
+	return row_size;
 }
 
 char *
-tableInsert(Table *t, char **items, size_t items_count)
+tableInsert(Table *t, char **items, uint32_t items_count)
 {
-	if (items_count != t->cols)
-		return "ins: Incorrect number of columns";
+	if (items_count / 2 != t->cols)
+		return "ins: Incorrect number of columns\n";
 
-	size_t row_size = 0;
-	for (uint32_t i = 0; i < t->cols; i++) {
-		switch (t->schema[i].type) {
-		case TYPE_BOOL:
-			row_size += sizeof(int);
-			break;
-		case TYPE_BYTES:
-		case TYPE_STR:
-			row_size += sizeof(char *);
-			break;
-		case TYPE_NUM:
-			row_size += sizeof(double);
-			break;
-		}
-	}
+	size_t row_size = tableRowSize(t);
 
 	t->data = realloc(t->data, row_size * (t->rows + 1));
 	char *insert = &t->data[t->rows * row_size];
@@ -194,7 +205,7 @@ tableInsert(Table *t, char **items, size_t items_count)
 	}
 
 	t->rows++;
-	return "ins: Success";
+	return "ins: Success\n";
 }
 
 char *
@@ -203,7 +214,7 @@ commandInsert(char *row)
 	char **tokens = NULL, *err;
 	int i, j;
 
-	if (!(err = tokenise(row, &tokens, &i)))
+	if ((err = tokenise(row, &tokens, &i)))
 		return err;
 
 	Table *t = NULL;
@@ -221,9 +232,93 @@ commandInsert(char *row)
 	return tableInsert(t, &tokens[1], i - 1);
 }
 
+char *
+tableGet(Table *table, char **criteria, int criteria_count)
+{
+	size_t row_size = tableRowSize(table);
+
+	for (uint32_t i = 0; i < table->rows; i++) {
+		int passed = 1;
+		for (int j = 0; j < criteria_count; j++) {
+			char *col = criteria[j];
+			char *mid = strchr(col, '=');
+			char *val = mid + 1;
+
+			if (!mid) return "get: Invalid criteria";
+
+			*mid = '\0';
+
+			int found = 0;
+			char *current_cell = &table->data[row_size * i];
+			for (uint32_t k = 0; k < table->cols; k++) {
+				char *cell = current_cell;
+				current_cell += typeSize(table->schema[k].type);
+
+				if (strcmp(table->schema[k].name, col) != 0)
+					continue;
+
+				found = 1;
+				switch (table->schema[k].type) {
+				case TYPE_STR:
+				case TYPE_BYTES:
+					if (strcmp(cell, val) != 0)
+						passed = 0;
+					break;
+				case TYPE_NUM:
+					if (*(double *)cell != strtod(val, NULL))
+						passed = 0;
+					break;
+				case TYPE_BOOL:
+					if (cell[0] != val[0])
+						passed = 0;
+					break;
+				}
+				break;
+			}
+			
+			if (!found)
+				return "get: No column matching criteria";
+
+			if (!passed)
+				break;
+
+			/* todo: return all rows */
+			char ret[256];
+			snprintf(ret, 256, "get: index %d\n", i);
+			return strdup(ret);
+		}
+	}
+
+	return "";
+}
+
+char *
+commandGet(char *cmd)
+{
+	char **tokens;
+	int token_count, j;
+	tokenise(cmd, &tokens, &token_count);
+
+	Table *t = NULL;
+	for (j = 0; j < tables_count; j++) {
+		if (strcmp(tables[j]->name, tokens[0]) == 0)
+			t = tables[j];
+	}
+
+	if (!t) {
+		char *err = malloc(sizeof("get: No table named ") + strlen(tokens[0])); /* sizeof includes null at end */
+		strcpy(err, "get: No table named ");
+		strcat(err, tokens[0]);
+		return err;
+	}
+
+	return tableGet(t, &tokens[1], token_count - 1);
+}
+
+
 int main(void) {
 	printf("%s", commandNew(strdup("ages age n name s")));
-	printf("%s", commandInsert(strdup("ages 10 \"joe smith\" 67 bob")));
-	printf("%10s", tables[0]->data);
+	printf("%s", commandInsert(strdup("ages 21 \"joe smith\" 10 bob")));
+	printf("%s", commandGet(strdup("ages name=\"joe smith\" age=21")));
 	return 0;
 }
