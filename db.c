@@ -110,7 +110,7 @@ tableNew(Table *table, char *name, char *text[], int cols) {
 	for (int i = 0; i < cols; i += 2) {
 		table->schema[i / 2].name = strdup(text[i]);
 
-		switch (text[i / 2 + 1][0]) {
+		switch (text[i + 1][0]) {
 		case 'n':
 			table->schema[i / 2].type = TYPE_NUM;
 			break;
@@ -177,34 +177,37 @@ tableRowSize(Table *t)
 char *
 tableInsert(Table *t, char **items, uint32_t items_count)
 {
-	if (items_count / 2 != t->cols)
+	if (items_count % t->cols != 0)
 		return "ins: Incorrect number of columns\n";
 
+	uint32_t new_rows = items_count / t->cols;
 	size_t row_size = tableRowSize(t);
 
-	t->data = realloc(t->data, row_size * (t->rows + 1));
+	t->data = realloc(t->data, row_size * (t->rows + new_rows));
 	char *insert = &t->data[t->rows * row_size];
 
-	for (uint32_t i = 0; i < t->cols; i++) {
-		switch (t->schema[i].type) {
-		case TYPE_BOOL:
-			if (items[i][0] == 't')
-				*(int *)insert = 0;
-			insert += sizeof(int);
-			break;
-		case TYPE_BYTES: /* fallthrough */
-		case TYPE_STR:
-			*(char **)insert = strdup(items[i]);
-			insert += sizeof(int);
-			break;
-		case TYPE_NUM:
-			*(double *)insert = atof(items[i]);
-			insert += sizeof(double);
-			break;
+	uint32_t item_idx = 0;
+	for (uint32_t r = 0; r < new_rows; r++) {
+		for (uint32_t i = 0; i < t->cols; i++, item_idx++) {
+			switch (t->schema[i].type) {
+			case TYPE_BOOL:
+				*(int *)insert = (items[item_idx][0] == 't');
+				insert += sizeof(int);
+				break;
+			case TYPE_BYTES:
+			case TYPE_STR:
+				*(char **)insert = strdup(items[item_idx]);
+				insert += sizeof(char *);
+				break;
+			case TYPE_NUM:
+				*(double *)insert = atof(items[item_idx]);
+				insert += sizeof(double);
+				break;
+			}
 		}
 	}
 
-	t->rows++;
+	t->rows += new_rows;
 	return "ins: Success\n";
 }
 
@@ -240,16 +243,16 @@ tableGet(Table *table, char **criteria, int criteria_count)
 	for (uint32_t i = 0; i < table->rows; i++) {
 		int passed = 1;
 		for (int j = 0; j < criteria_count; j++) {
-			char *col = criteria[j];
-			char *mid = strchr(col, '=');
-			char *val = mid + 1;
+			char *col = strdup(criteria[j]);
+			char *val = strchr(col, '=');
 
-			if (!mid) return "get: Invalid criteria";
+			if (!val) return "get: Invalid criteria";
 
-			*mid = '\0';
+			*val = '\0';
+			val++;
 
 			int found = 0;
-			char *current_cell = &table->data[row_size * i];
+			char *current_cell = table->data + row_size * i;
 			for (uint32_t k = 0; k < table->cols; k++) {
 				char *cell = current_cell;
 				current_cell += typeSize(table->schema[k].type);
@@ -261,28 +264,36 @@ tableGet(Table *table, char **criteria, int criteria_count)
 				switch (table->schema[k].type) {
 				case TYPE_STR:
 				case TYPE_BYTES:
-					if (strcmp(cell, val) != 0)
+					printf("%d %s != %s\n", i, *(char **)cell, val);
+					if (strcmp(*(char **)cell, val) != 0)
 						passed = 0;
 					break;
 				case TYPE_NUM:
-					if (*(double *)cell != strtod(val, NULL))
+					printf("num %lf != %lf\n", *(double *)cell, strtod(val, NULL));
+					if (*(double *)cell != strtod(val, NULL)) {
 						passed = 0;
+					}
 					break;
 				case TYPE_BOOL:
-					if (cell[0] != val[0])
+					if (*(int *)cell != (val[0] == 't'))
 						passed = 0;
 					break;
 				}
+
 				break;
 			}
+
+			free(col);
 			
 			if (!found)
 				return "get: No column matching criteria";
 
 			if (!passed)
 				break;
+		}
 
-			/* todo: return all rows */
+		/* todo: return all rows */
+		if (passed) {
 			char ret[256];
 			snprintf(ret, 256, "get: index %d\n", i);
 			return strdup(ret);
@@ -319,6 +330,6 @@ commandGet(char *cmd)
 int main(void) {
 	printf("%s", commandNew(strdup("ages age n name s")));
 	printf("%s", commandInsert(strdup("ages 21 \"joe smith\" 10 bob")));
-	printf("%s", commandGet(strdup("ages name=\"joe smith\" age=21")));
+	printf("%s", commandGet(strdup("ages name=bob age=10")));
 	return 0;
 }
